@@ -118,6 +118,15 @@
     return '"' + escaped.replace(/"/g, '\\"') + '"';
   };
 
+  //  reduce :: (a, [b], (a, b) -> a) -> a
+  var reduce = function(initial, xs, f) {
+    var result = initial;
+    for (var idx = 0; idx < xs.length; idx += 1) {
+      result = f(result, xs[idx]);
+    }
+    return result;
+  };
+
   //  range :: (Number, Number) -> [Number]
   var range = function(start, stop) {
     var result = [];
@@ -362,6 +371,15 @@
     function(nullable) { return nullable === null ? [] : [nullable]; }
   );
 
+  //  StrMap :: Type -> Type
+  var StrMap = UnaryType(
+    'sanctuary-def/StrMap',
+    function(x) { return $.Object.test(x); },
+    function(strMap) {
+      return map(keys(strMap), function(k) { return strMap[k]; });
+    }
+  );
+
   //  $$type :: a -> String
   var $$type = function(x) {
     return x != null && typeOf(x['@@type']) === 'String' ?
@@ -398,6 +416,7 @@
     ($.Number     = type0('Number')),
     ($.Object     = type0('Object')),
     ($.RegExp     = type0('RegExp')),
+    ($.StrMap     = StrMap),
     ($.String     = type0('String')),
     ($.Undefined  = type0('Undefined'))
   ];
@@ -752,7 +771,7 @@
 
     var _satisfactoryTypes =
     function(name, constraints, $typeVarMap, _value, index) {
-      return function recur(expType, values, nest) {
+      return function recur(expType, values, nesters) {
         var $1s, $2s, idx, okTypes;
 
         switch (expType.type) {
@@ -780,13 +799,28 @@
                 return all(values, t.test) ? [t] : [];
               });
               if (isEmpty(okTypes)) {
-                throw invalidValue(name, map(types, nest), _value, index);
+                throw invalidValue(name,
+                                   reduce(types, nesters, map),
+                                   _value,
+                                   index);
               }
             } else {
               okTypes = chain(commonTypes(map(values, determineActualTypes)),
                               rejectInconsistent);
               if (isEmpty(okTypes) && !isEmpty(values)) {
-                throw orphanArgument(env, name, _value, index);
+                //  If nesters is [] we found no common types for a top-level
+                //  type variable. Otherwise, we found no common types for a
+                //  nested type variable such as the ‘a’ in ‘StrMap a’.
+                if (isEmpty(nesters)) {
+                  throw orphanArgument(env, name, _value, index);
+                } else {
+                  throw invalidValue(name,
+                                     [reduce(expType,
+                                             nesters,
+                                             function(t, f) { return f(t); })],
+                                     _value,
+                                     index);
+                }
               }
             }
             if (!isEmpty(okTypes)) $typeVarMap[typeVarName] = okTypes;
@@ -795,17 +829,19 @@
           case 'UNARY':
             $1s = recur(expType.$1,
                         chain(values, expType._1),
-                        UnaryType.from(expType));
+                        [UnaryType.from(expType)].concat(nesters));
             return map(or($1s, [expType.$1]), UnaryType.from(expType));
 
           case 'BINARY':
             var specialize = BinaryType.from(expType);
+            var f$1 = function($1) { return specialize($1, expType.$2); };
+            var f$2 = function($2) { return specialize(expType.$1, $2); };
             $1s = recur(expType.$1,
                         chain(values, expType._1),
-                        function($1) { return specialize($1, expType.$2); });
+                        [f$1].concat(nesters));
             $2s = recur(expType.$2,
                         chain(values, expType._2),
-                        function($2) { return specialize(expType.$1, $2); });
+                        [f$2].concat(nesters));
             return BinaryType.xprod(expType,
                                     or($1s, [expType.$1]),
                                     or($2s, [expType.$2]));
@@ -819,7 +855,7 @@
     var satisfactoryTypes =
     function(name, constraints, $typeVarMap, expType, value, index) {
       return _satisfactoryTypes(name, constraints, $typeVarMap, value, index)
-                               (expType, [value], id);
+                               (expType, [value], []);
     };
 
     var curry = function(name, constraints, expArgTypes, expRetType,

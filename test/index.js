@@ -464,6 +464,7 @@ describe('def', function() {
                    '  - Number\n' +
                    '  - Object\n' +
                    '  - RegExp\n' +
+                   '  - (StrMap ???)\n' +
                    '  - String\n' +
                    '  - Undefined\n' +
                    '  - Integer\n' +
@@ -545,6 +546,7 @@ describe('def', function() {
                    '  - Number\n' +
                    '  - Object\n' +
                    '  - RegExp\n' +
+                   '  - (StrMap ???)\n' +
                    '  - String\n' +
                    '  - Undefined\n' +
                    '  - ("foo" | true | 42)'));
@@ -862,6 +864,95 @@ describe('def', function() {
     eq($.RegexFlags.test('y'), false);
   });
 
+  it('supports the "StrMap" type constructor', function() {
+    var env = $.env.concat([Either, $.StrMap]);
+    var def = $.create(true, env);
+
+    //  id :: a -> a
+    var id = def('id', {}, [a, a], R.identity);
+
+    //  keys :: StrMap a -> [String]
+    var keys =
+    def('keys',
+        {},
+        [$.StrMap(a), $.Array($.String)],
+        function(m) { return R.keys(m).sort(); });
+
+    //  values :: StrMap a -> [a]
+    var values =
+    def('values',
+        {},
+        [$.StrMap(a), $.Array(a)],
+        function(m) { return R.map(function(k) { return m[k]; }, keys(m)); });
+
+    eq(id({}), {});
+    eq(id({x: 1, y: 2, z: 3}), {x: 1, y: 2, z: 3});
+    eq(id({a: 1, b: 'XXX'}), {a: 1, b: 'XXX'});
+
+    eq(keys({}), []);
+    eq(keys({x: 1, y: 2, z: 3}), ['x', 'y', 'z']);
+
+    throws(function() { keys({a: 1, b: 'XXX'}); },
+           errorEq(TypeError,
+                   '‘keys’ expected a value of type (StrMap a) as its ' +
+                   'first argument; received {"a": 1, "b": "XXX"}'));
+
+    eq(values({}), []);
+    eq(values({x: 1, y: 2, z: 3}), [1, 2, 3]);
+
+    throws(function() { values({a: 1, b: 'XXX'}); },
+           errorEq(TypeError,
+                   '‘values’ expected a value of type (StrMap a) as its ' +
+                   'first argument; received {"a": 1, "b": "XXX"}'));
+
+    //  testUnaryType :: [StrMap Number] -> [StrMap Number]
+    var testUnaryType =
+    def('testUnaryType',
+        {},
+        [$.Array($.StrMap($.Number)), $.Array($.StrMap($.Number))],
+        R.identity);
+
+    eq(testUnaryType([{x: 1}, {y: 2}, {z: 3}]), [{x: 1}, {y: 2}, {z: 3}]);
+
+    throws(function() { testUnaryType([{x: 'XXX'}]); },
+           errorEq(TypeError,
+                   '‘testUnaryType’ expected a value of type ' +
+                   '(Array (StrMap Number)) as its first argument; ' +
+                   'received [{"x": "XXX"}]'));
+
+    //  testBinaryType :: Either a (StrMap b) -> Either a (StrMap b)
+    var testBinaryType =
+    def('testBinaryType',
+        {},
+        [Either(a, $.StrMap(b)), Either(a, $.StrMap(b))],
+        R.identity);
+
+    eq(testBinaryType(Left('XXX')), Left('XXX'));
+    eq(testBinaryType(Right({x: 1, y: 2, z: 3})), Right({x: 1, y: 2, z: 3}));
+
+    throws(function() { testBinaryType(Right({x: ['foo', false]})); },
+           errorEq(TypeError,
+                   '‘testBinaryType’ expected a value of type ' +
+                   '(Either a (StrMap b)) as its first argument; ' +
+                   'received Right({"x": ["foo", false]})'));
+
+    //  testRecordType :: { map :: StrMap Number } -> { map :: StrMap Number }
+    var testRecordType =
+    def('testRecordType',
+        {},
+        [$.RecordType({map: $.StrMap($.Number)}),
+         $.RecordType({map: $.StrMap($.Number)})],
+        R.identity);
+
+    eq(testRecordType({map: {x: 1, y: 1}}), {map: {x: 1, y: 1}});
+
+    throws(function() { testRecordType({map: {x: 'XXX'}}); },
+           errorEq(TypeError,
+                   '‘testRecordType’ expected a value of type ' +
+                   '{ map :: (StrMap Number) } as its first argument; ' +
+                   'received {"map": {"x": "XXX"}}'));
+  });
+
   it('uses R.toString-like string representations', function() {
     //  f :: Null -> Null
     var f = def('f', {}, [$.Null, $.Null], function(x) { return x; });
@@ -1007,22 +1098,9 @@ describe('def', function() {
 
     throws(function() { concat([[1, 2, 3], [Left('XXX'), Right(42)]]); },
            errorEq(TypeError,
-                   '‘concat’ received [[1, 2, 3], [Left("XXX"), Right(42)]] ' +
-                   'as its first argument, but this value is not a ' +
-                   'member of any of the types in the environment:\n' +
-                   '\n' +
-                   '  - (Array ???)\n' +
-                   '  - Boolean\n' +
-                   '  - Date\n' +
-                   '  - Error\n' +
-                   '  - Function\n' +
-                   '  - Null\n' +
-                   '  - Number\n' +
-                   '  - Object\n' +
-                   '  - RegExp\n' +
-                   '  - String\n' +
-                   '  - Undefined\n' +
-                   '  - (Either ??? ???)'));
+                   '‘concat’ expected a value of type (Array a) ' +
+                   'as its first argument; ' +
+                   'received [[1, 2, 3], [Left("XXX"), Right(42)]]'));
   });
 
   it('supports type-class constraints', function() {
