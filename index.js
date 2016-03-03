@@ -99,6 +99,13 @@
     return result;
   };
 
+  //  mapIndexed :: ([a], ((a, Integer) -> b)) -> [b]
+  var mapIndexed = function(xs, f) {
+    var result = [];
+    for (var idx = 0; idx < xs.length; idx += 1) result.push(f(xs[idx], idx));
+    return result;
+  };
+
   //  or :: ([a], [a]) -> [a]
   var or = function(xs, ys) { return isEmpty(xs) ? ys : xs; };
 
@@ -135,6 +142,13 @@
   //  strRepeat :: (String, Integer) -> String
   var strRepeat = function(s, times) {
     return Array(times + 1).join(s);
+  };
+
+  //  replaceWith :: Char -> String -> String
+  var replaceWith = function(c) {
+    return function(s) {
+      return strRepeat(c, s.length);
+    };
   };
 
   //  findNodePosition :: Node -> (Node -> Node) -> Position
@@ -305,20 +319,23 @@
     return isEmpty(node.children);
   };
 
-  //  isDelimiter :: Node -> Boolean
-  var isDelimiter = function(t) {
-    return t.type === 'DELIMITER';
+  //  typeEq :: String -> Type -> Boolean
+  var typeEq = function(s) {
+    return function(t) {
+      return t.type === s;
+    };
   };
+
+  //  isDelimiter :: Node -> Boolean
+  var isDelimiter = typeEq('DELIMITER');
 
   //  isParameterizedType :: Object -> Boolean
   var isParameterizedType = function(t) {
-    return t.type === 'UNARY' || t.type === 'BINARY';
+    return typeEq('UNARY')(t) || typeEq('BINARY')(t);
   };
 
   //  isVar :: Node -> Boolean
-  var isVar = function(t) {
-    return t.type === 'VARIABLE';
-  };
+  var isVar = typeEq('VARIABLE');
 
   //  getConstraintText :: Node -> String
   var getConstraintText = function(constraint) {
@@ -650,6 +667,12 @@
   //  show :: a -> String
   var show = function(x) { return _show(x, []); };
 
+  //  showType :: Type -> String
+  var showType = function(type) {
+    return String(type).replace(/^[(](.*)[)]$/,
+                                typeEq('FUNCTION')(type) ? '($1)' : '$1');
+  };
+
   //  TypeClass :: (String, (a -> Boolean)) -> TypeClass
   $.TypeClass = function(name, test) {
     return {
@@ -815,6 +838,22 @@
         return s + '}';
       },
       fields: fields
+    };
+  };
+
+  //  $.Function_ :: (Type, Type) -> Type
+  $.Function_ = function($1, $2) {
+    var format = function(f, f$1, f$2) {
+      return f('(') + f$1(String($1)) + f(' -> ') + f$2(String($2)) + f(')');
+    };
+    return {
+      '@@type': 'sanctuary-def/Type',
+      type: 'FUNCTION',
+      test: function(x) { return $$typeEq('Function')(x); },
+      format: format,
+      toString: always(format(id, id, id)),
+      $1: $1,
+      $2: $2
     };
   };
 
@@ -1038,7 +1077,7 @@
 
   //  equalTypes :: (Type, Type) -> Boolean
   var equalTypes = function equalTypes(t1, t2) {
-    if (t1.type === 'UNKNOWN' || t2.type === 'UNKNOWN') return true;
+    if (typeEq('UNKNOWN')(t1) || typeEq('UNKNOWN')(t2)) return true;
     switch (t1.type) {
       case 'ANY':
         return t1.type === t2.type && t1.name === t2.name;
@@ -1229,13 +1268,13 @@
       return function recur(expTypes) {
         for (var idx = 0; idx < expTypes.length; idx += 1) {
           var expType = expTypes[idx];
-          if (expType.type !== 'VARIABLE') {
+          if (!typeEq('VARIABLE')(expType)) {
             if (!any(env, eqProps('name')(expType))) {
               throw typeNotInEnvironment(env, name, expType);
             }
-            if (expType.type === 'UNARY') {
+            if (typeEq('UNARY')(expType)) {
               recur([expType.$1]);
-            } else if (expType.type === 'BINARY') {
+            } else if (typeEq('BINARY')(expType)) {
               recur([expType.$1, expType.$2]);
             }
           }
@@ -1249,10 +1288,10 @@
         return (
           t.name === 'sanctuary-def/Nullable' || !t.test(value) ?
             [] :
-          t.type === 'UNARY' ?
+          typeEq('UNARY')(t) ?
             map(commonTypes(or(map(t._1(value), recur), [[Unknown]])),
                 UnaryType.from(t)) :
-          t.type === 'BINARY' ?
+          typeEq('BINARY')(t) ?
             BinaryType.xprod(
               t,
               commonTypes(or(map(t._1(value), recur), [[Unknown]])),
@@ -1515,16 +1554,56 @@
         );
       }
 
+      var expRetType = expTypes[expTypes.length - 1];
+
       if (checkTypes) assertExpectedTypesInEnvironment(name)(expTypes);
+
+      var impl_ = checkTypes && any(expTypes, typeEq('FUNCTION')) ?
+        function() {
+          return impl.apply(this, mapIndexed(arguments, function(arg, idx) {
+            var expType = expArgTypes[idx];
+            return typeEq('FUNCTION')(expType) ?
+              function(input) {
+                if (!expType.$1.test(input)) {
+                  throw new TypeError('Invalid input');
+                }
+                var output = arg(input);
+                if (!expType.$2.test(output)) {
+                  throw new TypeError(
+                    'Invalid value\n\n' +
+                    name + ' :: ' +
+                    map(expTypes, showType).join(' -> ') + '\n' +
+                    replaceWith(' ')(
+                      [name + ' :: ']
+                      .concat(map(expArgTypes.slice(0, idx), showType))
+                      .join(' -> ')
+                    ) +
+                    expType
+                    .format(replaceWith(' '),
+                            replaceWith(' '),
+                            replaceWith('^'))
+                    .replace(/[ ]+$/, '') +
+                    '\n\n' +
+                    showErrorValue(1, nullaryTypesAndValues([output])) +
+                    'The value at position 1 is not a member of ' +
+                    expType.$2 + '.\n'
+                  );
+                }
+                return output;
+              } :
+              arg;
+          }));
+        } :
+        impl;
 
       return curry(name,
                    constraints,
                    expArgTypes,
-                   expTypes[expTypes.length - 1],
+                   expRetType,
                    {},
                    new Array(arity),
                    range(0, arity),
-                   impl);
+                   impl_);
     };
   };
 

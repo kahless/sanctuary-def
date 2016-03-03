@@ -1592,6 +1592,42 @@ describe('def', function() {
                    '  - (Either ??? ???)\n'));
   });
 
+  it('supports higher-order functions', function() {
+    var env = $.env.concat([$.Function_]);
+    var def = $.create(true, env);
+
+    //  f :: (String -> Number) -> [String] -> [Number]
+    var f =
+    def('f',
+        {},
+        [$.Function_($.String, $.Number), $.Array($.String), $.Array($.Number)],
+        R.map);
+
+    //  g :: (String -> Number) -> [String] -> [Number]
+    var g =
+    def('g',
+        {},
+        [$.Function_($.String, $.Number), $.Array($.String), $.Array($.Number)],
+        function(f, xs) { return f(xs); });
+
+    eq(f(R.length, ['foo', 'bar', 'baz', 'quux']), [3, 3, 3, 4]);
+
+    throws(function() { g(R.length, ['a', 'b', 'c']); },
+           errorEq(TypeError,
+                   'Invalid input'));
+
+    throws(function() { f(R.identity, ['a', 'b', 'c']); },
+           errorEq(TypeError,
+                   'Invalid value\n' +
+                   '\n' +
+                   'f :: (String -> Number) -> Array String -> Array Number\n' +
+                   '                ^^^^^^\n' +
+                   '\n' +
+                   '1)  "a" :: String\n' +
+                   '\n' +
+                   'The value at position 1 is not a member of Number.\n'));
+  });
+
   it('supports type-class constraints', function() {
     var env = $.env.concat([Integer, Maybe, Either]);
     var def = $.create(true, env);
